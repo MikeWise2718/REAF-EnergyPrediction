@@ -1,0 +1,1169 @@
+---
+title: "88Acres Advanced Energy Model - Modeling Run"
+author: "Mike Wise"
+date: "22 Jan 2016"
+output: html_document
+---
+
+This file creates the ML models necessary to simulate the operation of a buildings HVAC system.
+
+#![Overall Data Flow](PrescripFig1.png)
+  
+Here we initialize libraries and read in the data.
+
+```{r echo=T}
+# Constant Chunk 
+
+# initVer <- function(){
+#   ver <- list()
+#   ver$number <- 0.32
+#   ver$string <- sprintf("Version %.2f",ver$number)
+#   ver$starttime <- Sys.time()
+#   ver$startfmttime <- sprintf(format(ver$starttime, "%d %b %Y - %H:%M:%S"))
+#   return(ver)
+# }
+
+#bld_ <- "REDW B"
+#bld_ <- "REDW A"
+#bld_ <- "B99"
+#bld_ <- "WILLOWS 10525"
+bld_ <- "City Center"
+
+
+library(randomForest,quietly=T,warn.conflicts=F)
+library(lubridate,quietly=T,warn.conflicts=F)
+library(ggplot2,quietly=T,warn.conflicts=F)
+library(reshape2,quietly=T,warn.conflicts=F)
+library(dplyr,quietly=T,warn.conflicts=F)
+library(scales,quietly=T,warn.conflicts=F)
+library(knitr,quietly=T,warn.conflicts=F)
+library(gridExtra,quietly=T,warn.conflicts=F)
+library(reaferg)
+
+ver <- initVer()
+print(sprintf("%s created on %s",ver$string,ver$startfmttime))
+
+
+#knit_hooks$set(webgl = hook_webgl)
+
+# xx <- sort(rnorm(1000))
+# yy <- rnorm(1000)
+# zz <- rnorm(1000) + atan2(xx,yy)
+# plot3d(xx, yy, zz, col=rainbow(1000))
+
+# getErgPaths <- function(bpath="../5-prescriptive/"){
+#   path <- list()
+#   path$graph <- paste0(bpath,"graphs")
+#   path$qdata <- paste0(bpath,"qdata")
+#   # these later paths appear unused?
+#   path$data <- paste0(bpath,"data")
+#   path$tdata <- paste0(bpath,"tdata")
+#   path$runparm <- paste0(bpath,"rundata")
+#   path$wdata <- paste0(bpath,"wdata")
+#   return(path)
+# }
+
+# getRparms <- function(blld,rseed=1234){
+#   rparms <- list()
+#   rparms$bld <- blld
+#   rparms$bchtime <- "---bchtime---"
+#   rparms$runname <- "devel"
+#   rparms$gwidth <- 12
+#   rparms$gheight <- 9
+#   rparms$randomseed <- rseed
+#   set.seed(rseed)
+#   
+#   rparms$trainfrac <- 0.93
+#   rparms$rfntree <- 70
+#   
+#   rparms$ergname <- "e.tot"
+#   
+#   rparms$noiselev <- 9
+#   
+#   rparms$usagecostkwh <- (0.06209+0.016377)
+#   rparms$demandcostkw <- 3.78
+#   
+#   rparms$tzab <- "US/Pacific"
+#   rparms$pltstime <- ymd_hms("2013-01-01 00:00:00",tz=rparms$tzab)
+#   rparms$stime <- ymd_hms("2014-01-01 00:00:00",tz=rparms$tzab)
+#   rparms$stime <- ymd_hms("2014-10-01 00:00:00",tz=rparms$tzab)
+#   rparms$etime <- ymd_hms("2014-12-03 23:45:00",tz=rparms$tzab)
+#   
+#   rparms$sitime <- rparms$stime
+#   rparms$eitime <- rparms$etime
+#   rparms$sitime <- ymd_hms("2014-11-18 00:00:00",tz=rparms$tzab)
+#   rparms$eitime <- ymd_hms("2014-11-18 23:45:00",tz=rparms$tzab)
+#   
+#   rparms$hvaclevs <- c("heating","drift","cooling")
+#   rparms$hvaccolors <- c("red","green","blue")
+#   
+#   # shiny specific
+#   rparms$trainingInvalid <- T
+#   rparms$traincount <- 0
+#   rparms$predictcount <- 0
+#   rparms$nchg <- 0
+#   
+#   rparms$dispvar <- "occ"
+#   rparms$ergvar <- "e.tot"
+#   
+#   return(rparms)
+# }
+
+# getFeatures <- function(){
+#   feats <- list()
+#   feats$time <- c("time","year","ydayf","hourf","wday","holi")
+#   feats$bld <- c("hdcnt")
+#   feats$wetr <- c("temp.f","tcool.f","theat.f","dewp.f","pres.pa","wind.deg","wind.kmh","hum.pc","rain.mm")
+#   feats$pred <- c("occ")
+#   feats$dwetr <- c("tcool.f","theat.f","dewp.f","pres.pa","wind.deg","wind.kmh","hum.pc","rain.mm")
+#   return(feats)
+# }
+
+epath <- getErgPaths(bpath="c:/transfer/deshark/")
+rparms <- getRparms(bld_)
+parms <- data.frame(ver$starttime)
+feats <- getFeatures()
+
+```
+
+Graphics function definitions
+
+```{r fig.width=14, fig.height=18, echo=T}
+# Plot Function Chunk
+
+# mwk <- function(x){
+#   rv <- (x+6)%%7
+#   rv <- ifelse(rv==0,7,rv)
+#   return(rv)
+# }
+
+# r2print <- function(titwrd,y,predy,nrt,npr){
+#   if (is.factor(y)){
+#     y <- as.numeric(as.character(y))
+#   }
+#   if (is.factor(predy)){
+#     predy <- as.numeric(as.character(predy))
+#   }
+#   meany <- mean(y,na.rm=T)
+#   res <- y-predy
+#   ssres <- sum(res*res,na.rm=T)
+#   sstot <- sum((y-meany)*(y-meany),na.rm=T)
+#   
+#   r2test <- 1 - (ssres/sstot)
+#   adjrat <- (nrt-1)/(nrt-npr-1)
+#   print(sprintf("%s regressors:%d  predictors:%d   adjrat:%.5f",titwrd,nrt,npr,adjrat))
+#   print(sprintf("   SSres:%.5f  SStot:%.5f  mean(y):%.5f",ssres,sstot,meany)) # See Wikipedia "Coefficent of determination"" entry
+#   ar2test <- 1 - ((1-r2test)*adjrat)
+#   print(sprintf("%s R2 test:%.5f   Adjusted R2 test%.5f",titwrd, r2test,ar2test))
+#   return(ar2test)
+# }
+
+# preStats <- function(qdf,blld,vname){
+#   msg <-sprintf("Means - avgval:%.1f  avgstd:%.1f avgcount:%.1f",
+#                 mean(qdf$val,na.rm=T),mean(qdf$std,na.rm=T),mean(qdf$cnt,na.rm=T))
+#   print(msg)
+# }
+
+# doRf <- function(rparms,trn,blld,vname,dropvars=NULL){
+#   set.seed(5678)
+#   rfntree <- rparms$rfntree
+#   print(sprintf("Starting rf on %s-%s",blld,vname))
+#   algelap <- 0
+#   
+#   
+#   algstarttime <- Sys.time()
+#   # Always drop these because we do not want to predict on them
+#   trn$qhr <- NULL
+#   trn$time <- NULL
+#   trn$datetime <- NULL
+#   #  trn$year <- NULL
+#   #browser()
+#   
+#   if (!is.null(dropvars)){
+#          print("dropvars:")
+#          print(dropvars)
+#          print("names(trn):")
+#          print(names(trn))
+#     idxes <- match(dropvars,names(trn))
+#     idxes <- idxes[ !is.na(idxes) ]
+#     #     print("match:")
+#     #     print(idxes)
+#     trn[,idxes] <- list(NULL)
+#     print("dropping vars")
+#     print(dropvars)
+#   }
+#   formc <- sprintf("%s ~ .",vname)
+#   print(sprintf("Training with %s",formc))
+#   form <- as.formula(formc)
+#   rf <- randomForest(form, trn, do.trace=10, ntree=rfntree,importance=TRUE)
+#   algelap <- as.numeric((Sys.time()-algstarttime)[1],units="secs")
+#  # print(rf)
+#   print(sprintf("%s Training rf at %s took %.1f secs",vname,algstarttime,algelap))
+#  # print(summary(rf))
+#   if (!is.null(rf$rsq)){
+#     r2plot <- qplot(1:length(rf$rsq),rf$rsq,main=sprintf("%s - R2 by iteration",vname))
+#     print(r2plot)
+#   } else {
+#     print(sprintf("rf$rsq is NULL"))
+#     r2plot <- NULL
+#   }
+#   #browser()
+#   print("importance of rf")
+#   impplt <- importance(rf)
+#   print("print(impplt)")
+#   print(impplt)
+#   print("varimpplot")
+#   varImpPlot(rf,main=sprintf("%s - rf varImpPlot",vname))
+#   
+#   parms$algelap <- algelap
+#   parms$rfntree <- rfntree
+#   rvals <- list()
+#   rvals[['impplot']] <- impplt
+#   rvals[['r2plot']] <- r2plot
+#   rvals[['rf']] <- rf
+#   return(rvals)
+# }
+
+# splitData <- function(rdf,blld,vname,tfrac=0.7,runname="run",testonlastweeks=T,writeOutData=F){
+#   if (testonlastweeks){
+#     lstidx <- trunc(tfrac*nrow(rdf))
+#     istrainpt <- seq(1:nrow(rdf))<lstidx
+#     print(sprintf("%s testonlastweeks set - last training index:%d",vname,lstidx))
+#   } else {
+#     istrainpt <- 2<ranidx  # 92.5 percent training cases
+#   }
+#   rdf$datetime <- rdf$time
+#   trn <- rdf[istrainpt,]
+#   tst <- rdf[!istrainpt,]
+#   rdf$datetime <- NULL
+#   trn$datetime <- NULL
+#   tst$datetime <- NULL
+#   
+# #  browser()
+#   if (is.factor(rdf[[vname]])){
+#     for (lev in levels(rdf[[vname]])){
+#       ntrn <- sum(trn[[vname]]==lev)
+#       ntst <- sum(tst[[vname]]==lev)
+#      # print(sprintf("%s level:%s ntrn:%d ntst:%d",vname,lev,ntrn,ntst))
+#       if (ntrn==0 & ntst!=0){
+#      #   print(sprintf("shifting level:%s  ntrn:%d ntst:%d",lev,ntrn,ntst))
+#         idx <- which(tst[[vname]]==lev)
+#         # move one of the tst records to trn
+#         sidx <- sample(idx,1)
+#         trn <- rbind(trn,tst[sidx,])
+#         tst <- tst[-sidx,]
+#       }
+#     }
+#   }
+#   
+#   print(sprintf("Spliting %s - train cases:%d test cases:%d",vname,nrow(trn),nrow(tst)))
+#   
+#   if (writeOutData){
+#     trfnamebase <- sprintf("train-%s-%s-%s-%.1f.csv",blld,vname,runname,version)
+#     trfname <- sprintf("%s/%s",tdatapath,trfnamebase)
+#     print(sprintf("Writing %d rows to %s",nrow(trn),trfname))
+#     write.csv(trn,trfname,quote=F,row.names=F)
+#     
+#     tsfnamebase <- sprintf("test-%s-%s-%s-%.1f.csv",blld,vname,runname,version)
+#     tsfname <- sprintf("%s/%s",tdatapath,tsfnamebase)
+#     print(sprintf("Writing %d rows to %s",nrow(tst),tsfname))
+#     write.csv(tst,tsfname,quote=F,row.names=F)
+#   }
+#   rlst <- list()
+#   rlst[[1]] <- trn
+#   rlst[[2]] <- tst
+#   print("end of splitdata")
+#   return(rlst)
+# }
+
+# createPlotSet <- function(rdf,rdfvname,rdfvlab,trn,trnvname,trnvlab,tst,tstvname,tstvlab,orgtime,tzab="UCT"){
+#   n1df <- data.frame(time=rdf$time,qhr=rdf$qhr,val=rdf[[rdfvname]],vlab=rdfvlab)
+#   n2df <- data.frame(time=trn$time,qhr=trn$qhr,val=trn[[trnvname]],vlab=trnvlab)
+#   n3df <- data.frame(time=tst$time,qhr=tst$qhr,val=tst[[tstvname]],vlab=tstvlab)
+#   rdf <- rbind(n1df,n2df,n3df)
+#   rdf$time <- ymd_hms(rdf$time,tz=tzab)
+# #  attr(rdf$time,"tzone") <- tzab
+#   rdf$year <- year(rdf$time)
+#   rdf$daynum <- trunc(as.numeric(1+difftime(rdf$time, orgtime, units="days")))
+#   rdf$weeknum <-trunc(rdf$daynum / 7)
+#   rdf$wkrow <- trunc(rdf$weeknum / 4)
+#   rdf$wkcol <- rdf$weeknum %% 4
+#   rdf$timewk <- (as.numeric(rdf$time)  - rdf$weeknum*7*24*60*60 - as.numeric(orgtime) + 1)/(24*60*60)
+#   rdf$holi <- 0 # no holidays
+#   return(rdf)
+# }
+
+# readData3 <- function(blld,qpath,vname,vfname=NULL,tzab="UCT"){
+#   # This qdata was created in 3-advmodel\aggdataNN.Rmd
+#   if (is.null(vfname)){
+#     vfname <- vname
+#   }
+#   fname <- sprintf("%s/%s-%s.csv",qpath,blld,vfname)
+#   df <- read.csv(fname)
+#   dbdf <<- df
+#   df$time <- ymd_hms(df$time,tz=tzab)
+#   print(sprintf("Read %d rows from %s",nrow(df),fname))
+#   sapply(df,class)
+#   return(df)
+# }
+
+# trainAndPredict_3 <- function(rparms,qpath,vname,vfname=NULL,iatlims=NULL,lmnames=NULL,dropvars=NULL,fullset=F,medianFilter=F,filterDates=T,addlaggediat=F,occAsFactor=F){
+#     ergv <- rparms$ergname
+#     rrdf <- readData3(rparms$bld,qpath,vname,vfname,rparms$tzab)
+# 
+#   if (occAsFactor){
+#     occfak <- factor(rrdf$occ)
+#     maxlevs <- 20
+#     if (length(levels(occfak)>maxlevs)){
+#       discocc <- trunc( 0.5 + rrdf$occ*maxlevs )/maxlevs
+#       occfak <- factor(discocc)
+#     }
+#     rrdf$occ <- occfak
+#   }
+#   if (!is.null(ergv)){
+#     rrdf[["erg"]] <- rrdf[[ergv]]
+#   }
+#   rrdf$wday <- mwk(rrdf$wday)
+#   if (medianFilter){
+#     rrdf[[vname]] <- medianFilter(rrdf[[vname]])
+#   }
+#   print(summary(rrdf))
+#   rrdf[["e.tot"]] <- NULL
+#   rrdf[["e.base"]] <- NULL
+#   rrdf[["e.plug"]] <- NULL
+#   if (addlaggediat){
+#     nv <- nrow(rrdf)
+#     fval <- rrdf$iat[1]
+#     # lagged iat
+#     rrdf$liat <- c(fval,rrdf$iat[1:(nv-1)])
+#     # recalc the derivitive to be sure about its value
+#     rrdf$diat <- rrdf$iat-rrdf$liat
+#     # post lag
+#     lval <- rrdf$iat[nv]
+#     rrdf$piat <- c(rrdf$iat[2:nv],lval)
+#     vname <- "piat"
+#     rrdf$iat <- NULL
+#   }
+#   
+#   rdf <- rrdf[ complete.cases(rrdf), ]
+#   if (filterDates){
+#     rdf <- rdf[ rparms$stime<=rdf$time & rdf$time<=rparms$etime, ]
+#   }
+# 
+#   rlst <- splitData(rdf,rparms$bld,vname,tfrac=rparms$trainfrac,runname=rparms$runname)
+#   trndf <- rlst[[1]]
+#   tstdf <- rlst[[2]]
+#   
+#   if (occAsFactor){
+#     trndf <- droplevels(trndf)
+#   }
+# #  browser()
+#   if (!is.null(trndf$iat)){
+#     qiat <-  quantile(trndf$iat,c(0.20,0.80),na.rm=T)
+#     qmed <- median(trndf$iat)
+#     print("qiat")
+#     print(qiat)
+#     iatlims <- round(qiat,1)
+#     print("iatlims")
+#     print(iatlims)
+#   }
+#   
+#   rfvals <- doRf(rparms,trndf,rparms$bld,vname,dropvars )
+#   rffit <- rfvals$rf
+# #  browser()
+#   slmfit <- NULL
+# #   if (!is.null(iatlims)){
+# #     slmfit <- smseglm(trndf,vname,"iat",dropvars,iatlims,lmnames,trace=F)
+# #   }
+#   
+#   predvname <- paste0("pred.",vname)
+#   
+#   rdf[[predvname]] <- predict(rffit,rdf)
+#   tstdf[[predvname]] <- predict(rffit,tstdf)
+#   trndf[[predvname]] <- predict(rffit,trndf)
+#   rrdf[[predvname]] <- predict(rffit,rrdf)
+#   
+#   vlab <- paste0(rparms$bld,"-",vname)
+#   
+#   # etot.r2 <- r2print("e.tot",test$e.tot,test$res,nrow(test),ncol(test)-1)
+#   r2trn <- r2print(sprintf("trn-%s",vlab),trndf[[vname]],trndf[[predvname]],nrow(trndf),ncol(trndf)-1)
+#   r2tst <- r2print(sprintf("tst-%s",vlab),tstdf[[vname]],tstdf[[predvname]],nrow(tstdf),ncol(tstdf)-1)
+#   
+#  # browser()
+#   pdf <-  createPlotSet(rdf, predvname,"predicted",trndf,vname,"train",tstdf,vname,"test",rparms$pltstime,rparms$tzab)
+#   prdf <- createPlotSet(rrdf,predvname,"predicted",trndf,vname,"train",tstdf,vname,"test",rparms$pltstime,rparms$tzab)
+# 
+#   
+#   rlst <- list()
+#   rlst[["trndf"]] <- trndf
+#   rlst[["tstdf"]] <- tstdf
+#   rlst[["rdf"]] <- rdf
+#   rlst[["prdf"]] <- prdf
+#   rlst[["rffit"]] <- rffit
+#   rlst[["slmfit"]] <- slmfit
+#   rlst[["iatlims"]] <- iatlims
+#  # rlst[["qmed"]] <- qmed
+#   rlst[["r2plot"]] <- rfvals$r2plot
+#   rlst[["impplot"]] <- rfvals$impplot
+#   return(rlst)
+# }
+
+# detailPlot3 <- function(qdf,rparms,graphpath, vname,wdf = NULL,bdf = NULL,xlim=NULL,ylim=NULL,dval=F,saveplot=T) {
+#   if (!is.null(ylim)){
+#     qdf$val <- pmax( ylim[1], pmin( qdf$val, ylim[2]))
+#   }
+#   qdf <- qdf[!is.na(qdf$val), ]
+# 
+#   # Add missing weather
+#   if (!is.null(wdf)){
+#     wncdf <- wdf[!complete.cases(wdf),c(1,2)]
+#     wncdf$lev <- rep(0,nrow(wncdf))
+#     wncdf$dn <-
+#       trunc(as.numeric(1 + difftime(wncdf$wtime, rparms$pltstime, units = "days")))
+#     wncdf$wn <- trunc(wncdf$dn / 7)
+#     wncdf$wkrow <- trunc(wncdf$wn / 4)
+#     wncdf$wkcol <- trunc(wncdf$wn %% 4)
+#     wncdf$timewk <-
+#       (as.numeric(wncdf$wtime)  - wncdf$wn * 7 * 24 * 60 * 60 - as.numeric(rparms$pltstime) + 1) /
+#       (24 * 60 * 60)
+#     wncdf$series <- rep("no-weather-data",nrow(wncdf))
+#   }
+#   
+#   if (!is.null(bdf)){
+#     # Add holidays
+#     hodf <- bdf[bdf$holi > 0,c(1,2)]
+#     hodf$lev <- rep(0,nrow(hodf))
+#     hodf$dn <-
+#       trunc(as.numeric(1 + difftime(hodf$time, rparms$pltstime, units = "days")))
+#     hodf$wn <- trunc(hodf$dn / 7)
+#     hodf$wkrow <- trunc(hodf$wn / 4)
+#     hodf$wkcol <- trunc(hodf$wn %% 4)
+#     hodf$timewk <-
+#       (as.numeric(hodf$time)  - hodf$wn * 7 * 24 * 60 * 60 - as.numeric(rparms$pltstime) + 1) /
+#       (24 * 60 * 60)
+#     hodf$series <- rep("holiday",nrow(hodf))
+#   }
+#   
+#   
+#   # Add Month date lines
+#   vmax <- max( qdf$val,na.rm=T )
+#   vmin <- min( qdf$val,na.rm=T )
+#   print(sprintf("Value range min:%.4f  max:%.4f",vmin,vmax))
+#   
+#   vmax9 <- 0.9 * vmax
+#   atlist <- c()
+#   vldata <- NULL
+#   for (y in 2013:2014) {
+#     iy <- y - 2000
+#     for (m in 1:12) {
+#       dt <- ymd(sprintf("%d-%d-1",y,m),tz = "US/Pacific")
+#       dn <- trunc(as.numeric(1 + difftime(dt, rparms$pltstime, units = "days")))
+#       wn <- trunc(dn / 7)
+#       wr <- trunc(wn / 4)
+#       wc <- trunc(wn %% 4)
+#       twk <-
+#         (as.numeric(dt)  - wn * 7 * 24 * 60 * 60 - as.numeric(rparms$pltstime) + 1) / (24 *
+#                                                                                60 * 60)
+#       jdf <- data.frame(wkrow = wr,wkcol = wc,timewk = twk)
+#       vldata <- rbind(vldata,jdf)
+#       aldf <-
+#         data.frame(
+#           timewk = twk + 0.25, val = vmax9, vlab = "month-start",
+#           lab = sprintf("%d-%d",iy,m),wkrow = wr,wkcol = wc
+#         )
+#       atlist[[length(atlist) + 1]] <- aldf
+#     }
+#   }
+#   ecolors <- c("blue","green","red","black","darkgreen","darkblue")
+#   names(ecolors) <- c("predicted","train","test","month-start","no-weather-data","holiday")
+#   #print(sprintf("vname:%s - %s",vname,ecolors[vname]))
+#   #cvname <- ecolors[vname]
+#   fp <- ggplot(qdf,aes(timewk,val,color=vlab)) +
+#     
+#     geom_point(size = 0.01,shape = 16,na.rm=T ) +
+#     
+#     facet_grid(wkrow ~ wkcol) +
+#     scale_color_manual(values = ecolors) +
+#     geom_vline(aes(xintercept = timewk),vldata,size = 0.01) +        # month markers
+#     labs(title=sprintf("%s - %s",rparms$bld,vname),y=vname,x="Time") + 
+#     theme_bw()  
+#   
+#   if (!is.null(wdf)){
+#     fp <- fp + geom_point(
+#       aes(timewk,lev),size = 1,data = wncdf,shape = 16,alpha = I(0.5),na.rm=T
+#     )  # missing weather
+#   }
+#   if (!is.null(bdf)){
+#     fp <- fp + geom_point(
+#       aes(timewk,lev),size = 1,data = hodf,shape = 16,alpha = I(0.5),na.rm=T
+#     )  # holidays
+#   }
+#   if (!is.null(xlim)){
+#     fp <- fp + scale_x_continuous( limits=xlim )
+#   }  
+#   if (!is.null(ylim)){
+#     fp <- fp + scale_y_continuous( limits=ylim )
+#   }
+#   ## Add month date lines to plot
+#   jnk <-
+#     sapply(atlist,function(x) {
+#       # have to assign one level up, thus the double <<-
+#       fp <<- fp + geom_text(data = x,aes(timewk,val),size = 2,label = x$lab)
+#       #print(sprintf("adding %s",x$lab))
+#     })
+#   #glbfp <<- fp
+#   if (saveplot){
+#     gfname <- sprintf("%s/wkpanels-%s-%s-%.2f.png",graphpath,rparms$bld,rparms$bchtime,rparms$trainfrac)
+#     #ggsave(file=gfname, plot=fp, width=rparms$gwidth, height=rparms$gheight)
+#     png(gfname,width = 2000,height = 4000)
+#     #  print(fp)
+#     jnk <- dev.off()
+#   }
+#   return(fp)
+# }
+
+# overviewPlot3 <- function(qdf,rparms,vname,xlim=NULL,ylim=NULL,dval=F){
+#   if (!is.null(ylim)){
+#     qdf$val <- pmax( ylim[1], pmin( qdf$val, ylim[2]))
+#   }
+#   ecolors <- c("blue","green","red","black","darkgreen","darkblue")
+#   names(ecolors) <- c("predicted","train","test","month-start","no-weather-data","holiday")
+#   qqdf <- qdf[!is.na(qdf$val), ]
+#   qp <- qplot(time,val,data=qqdf,color=I(ecolors[qqdf$vlab]),alpha=I(1/10)) +
+#     labs(title=sprintf("%s - %s",rparms$bld,vname),y=vname,x="Time") + 
+#     scale_color_manual(values=ecolors) +
+#     guides(colour = guide_legend(override.aes = list(alpha = 1)))  # override legend alpha
+#   if (!is.null(xlim)){
+#     qp <- qp + scale_x_continuous( limits=xlim )
+#   }  
+#   if (!is.null(ylim)){
+#     qp <- qp + scale_y_continuous( limits=ylim )
+#   }
+#   # print(qp)
+#   return(qp)
+# }
+
+```
+
+# Train and plot
+
+
+```{r fig.width=12, fig.height=12,echo=T}
+
+
+# trainOne <- function(){
+#   erglst <- trainAndPredict_3(rparms,epath$qdata,"erg",vfname="erg3",dropvars=NULL)
+#   overviewPlot3(erglst[["prdf"]],rparms,rparms$ergname)
+#   detailPlot3(erglst[["prdf"]],rparms,epath$graph,rparms$ergname)
+#   
+# }
+# 
+# trainAll <- function(bld="City Faker",tf=0.7,rfn=10){
+#   rv <- list()
+#   rv[["occ"]] <-  genErgProf(bld,"occ",trainfak=tf,rfntree=rfn,ybase=0.8,yrng=0.8,ymin=0,ymax=1)
+#   rv[["iat"]] <-  genErgProf(bld,"iat",trainfak=tf,rfntree=rfn,ybase=72,yrng=3)
+#   rv[["diat"]] <-  genErgProf(bld,"diat",trainfak=tf,rfntree=rfn,ybase=0,yrng=3)
+#   rv[["e.base"]] <- genErgProf(bld,"e.base",trainfak=tf,rfntree=rfn,ybase=300,yrng=100)
+#   rv[["e.tot"]] <- genErgProf(bld,"e.tot",trainfak=tf,rfntree=rfn,ybase=1300,yrng=300)
+#   return(rv)
+# }
+
+# trainAll <- function(rparms,tf=0.7,rfn=10){
+#   
+#   rv <- list()
+#   
+#   depvar <- "occ"
+#   occlst <- trainAndPredict_3(rparms,epath$qdata,depvar,
+#                          dropvars=c("iat",feats$wetr,"ydayf","holi","year","hdcnt"),
+#                         occAsFactor = T)
+#   og <- overviewPlot3(occlst[["prdf"]],rparms,depvar)
+#   dg <- NULL #detailPlot(occlst[["prdf"]],rparms,"occ")
+#   occlst$overviewplot <- og
+#   occlst$detailplot <- dg
+#   occlst$depvar <- depvar
+#   rv[[depvar]] <- occlst
+#   
+#   depvar <- "erg"
+#   erglst <- trainAndPredict_3(rparms,epath$qdata,depvar,vfname="erg3",dropvars=NULL)
+#   og <- overviewPlot3(erglst[["prdf"]],rparms,rparms$ergname)
+#   dg <- detailPlot3(erglst[["prdf"]],rparms,epath$graph,rparms$ergname)
+#   erglst$overviewplot <- og
+#   erglst$detailplot <- dg
+#   erglst$depvar <- depvar
+#   rv[[depvar]] <- erglst
+#   
+#   depvar <- "diat"
+#   diatlst <- trainAndPredict_3(rparms,epath$qdata,depvar,vfname="diat3",iatlim=iatborders,lmnames=rparms$hvaclevs,
+#                                dropvars=c(feats$time,feats$bld,feats$dwetr,feats$pred),
+#                                medianFilter=F,occAsFactor = F)
+#   og <- overviewPlot3(diatlst[["prdf"]],rparms,depvar,ylim=c(-0.25,0.25))
+#   dg <- detailPlot3(diatlst[["prdf"]],rparms,epath$graph,depvar,ylim=c(-0.25,0.25))
+#   diatlst$overviewplot <- og
+#   diatlst$detailplot <- dg
+#   diatlst$depvar <- depvar
+#   rv[[depvar]] <- diatlst
+#   
+#   depvar <- "iat"
+#   iiatlst <- trainAndPredict_3(rparms,epath$qdata,depvar,vfname="diat3",lmnames=rparms$hvaclevs,
+#                                dropvars=c(feats$time,feats$bld,feats$dwetr,feats$pred),
+#                                medianFilter=F,addlaggediat=T,occAsFactor = F)
+#   og <- overviewPlot3(iiatlst[["prdf"]],rparms,depvar,ylim=c(-0.25,0.25))
+#   dg <- detailPlot3(iiatlst[["prdf"]],rparms,epath$graph,depvar,ylim=c(-0.25,0.25))
+#   iiatlst$overviewplot <- og
+#   iiatlst$detailplot <- dg
+#   iiatlst$depvar <- depvar
+#   rv[[depvar]] <- iiatlst
+#   return(rv)
+# }
+tset <- trainAll(rparms)
+
+```
+
+
+# OCC (Occpancy Settings)
+
+![OCC Prediction](PrescripFigOcc.png)
+
+```{r fig.width=12, fig.height=12,echo=T}
+
+print(tset$occ$overviewplot)
+print(tset$occ$detailplot)
+```
+
+
+# ERG (Total Energy Consumed by Building)
+
+![ERG Prediction](PrescripFigErg.png)
+
+
+```{r fig.width=12, fig.height=12,echo=T}
+
+print(tset$erg$overviewplot)
+print(tset$erg$detailplot)
+```
+
+# IAT (Mean Delta Internal Air Temp) - Depreciated
+
+```{r fig.width=12, fig.height=12,echo=T}
+# Reduce to only 3 vars, temp.f, iat, and erg
+
+print(tset$diat$overviewplot)
+print(tset$diat$detailplot)
+
+```
+
+
+# IAT (Mean Internal Air Temp)
+
+```{r fig.width=12, fig.height=12,echo=T}
+# Reduce to only 3 vars, temp.f, iat, and erg
+
+print(tset$iat$overviewplot)
+print(tset$iat$detailplot)
+```
+
+# Integrated Prediction
+
+![Integrated Prediction](PrescripFigInteg.png)
+
+```{r fig.width=12, fig.height=12,echo=T}
+
+# get_exdf3 <- function (rparms,rdf,slmfit,rffit) 
+# {
+#   erggran <- 100
+#   if (mean(rdf$erg) < 1000) {
+#     erggran <- 50
+#   }
+#   iatgran <- 0.5
+#   tpfgran <- 5
+#   quanlim <- c(0.02, 0.98)
+#   erglim <- erggran * trunc(quantile(rdf$erg, quanlim)/erggran)
+#   iatlim <- iatgran * trunc(quantile(rdf$iat, quanlim)/iatgran)
+#   tpflim <- tpfgran * trunc(quantile(rdf$temp.f, quanlim)/tpfgran)
+#   ergvals <- seq(erglim[[1]], erglim[[2]], erggran)
+#   iatvals <- seq(iatlim[[1]], iatlim[[2]], iatgran)
+#   tpfvals <- seq(tpflim[[1]], tpflim[[2]], tpfgran)
+#   exdf <- expand.grid(erg = ergvals, iat = iatvals, temp.f = tpfvals)
+#   hvaccolors <- rparms$hvaccolors
+#   names(hvaccolors) <- rparms$hvaclevs
+#   if (!is.null(slmfit)){
+#     pmdf <- predict(slmfit, exdf, trace = T, type = "dataframe")
+#     pmdf$pred.lm.diat <- pmdf$diat
+#     pmdf$diat <- NULL
+#     exdf <- merge(pmdf, exdf, c("erg", "iat", "temp.f"))
+#   }
+#   exdf$pred.diat <- predict(rffit, exdf)
+#   exdf$segname <- factor(exdf$segname, rparms$hvaclevs)
+#   exdf$iat.minus.oat <- exdf$iat - exdf$temp.f
+#   exdf$mtemp <- -exdf$temp.f
+#   exdf$ftemp <- as.factor(exdf$temp.f)
+#   exdf$ftemp <- factor(exdf$ftemp, levels = rev(levels(exdf$ftemp)))
+#   exdf$fiat <- as.factor(exdf$iat)
+#   exdf$fiat <- factor(exdf$fiat, levels = rev(levels(exdf$fiat)))
+#   exdf$imo <- trunc((exdf$iat.minus.oat + 5)/10) * 10
+#   return(exdf)
+# }
+
+# do3dplot <- function(rparms,diatlst,ddf,mode,xlb,ylb,zlb,addActualPath=F,addPredPath=T){
+# 
+#   rdf <- diatlst$rdf
+#   rffit <- diatlst$rffit
+#   slmfit <- diatlst$slmfit
+#   iatlims <- diatlst$iatlims
+# 
+#   diatlim <- c(-0.25,0.25)
+#   iatrng <- c(68,77)
+# 
+#   exdf <- get_exdf3(rparms,rdf,slmfit,rffit)
+#   exdf$colseg <- rparms$hvaccolors[exdf$segname]
+#   
+#   ddf$pred.iat.minus.oat <- ddf$pred.iat-ddf$temp.f
+#   ddf$colseg <- rparms$hvaccolors[1]
+#   
+#   if (sum(ddf$iat>iatlims[1])>0 ){
+#     ddf[ ddf$iat>iatlims[1],]$colseg <- rparms$hvaccolors[2]
+#   }
+#   if (sum(ddf$iat>iatlims[2])>0 ){
+#     ddf[ddf$iat>iatlims[2] ,]$colseg <- rparms$hvaccolors[3]
+#   }
+# 
+#   y <- exdf$pred.lm.diat
+#   if (mode=="rf"){
+#     y <- exdf$pred.diat
+#   }
+#   plot3d(exdf$erg,y,exdf$iat,col=exdf$colseg,xlab=xlb,ylab=ylb,zlab=zlb)
+#   if (addPredPath){
+#     lines3d(ddf$pred.erg,ddf$pred.cas.diat,ddf$iat,col=ddf$colseg,add=T)
+#   }
+#   if (addActualPath){
+#     lines3d(ddf$orig.cas.erg,ddf$orig.cas.diat,ddf$orig.cas.iat,col="yellow",add=T)
+#   }
+# 
+#   # purple floor geometry
+#   p3 <- par3d()
+#   ergmin  <- p3$bbox[1]+10
+#   ergmax  <- p3$bbox[2]-10
+#   diatmin <- p3$bbox[3]+0.01
+#   diatmax <- p3$bbox[4]-0.01
+#   iatmin  <- p3$bbox[5]+0.1
+#   iatmax  <- p3$bbox[6]-0.1
+#   
+#   zipdf <- data.frame(x=c(ergmin,ergmin,ergmax,ergmax,ergmin),
+#                       y=c(0,0,0,0,0),
+#                       z=c(iatmin,iatmax,iatmax,iatmin,iatmin))
+#   polygon3d(zipdf$x,zipdf$y,zipdf$z,coord=c(1,3),alpha=0.5,color="purple",add=T)
+# }
+
+
+
+# mergeByQhr<- function(cname,df,df2){
+#   ddf2 <-  df2[,match(c("qhr",cname),names(df2))]
+#   rdf <- merge(df,ddf2,by="qhr")
+#   return(rdf)
+# }
+# 
+# mergeDfsByQhr <- function(df1,df2,df3){
+#   df <- df1
+#   sapply( names(df2), function(x){ if( is.null(df[[x]])){ df <<- mergeByQhr(x,df,df2) } } )
+#   sapply( names(df3), function(x){ if( is.null(df[[x]])){ df <<- mergeByQhr(x,df,df3) } } )
+#   return(df)
+# } 
+
+# occcontrol <- function (date,occpred,preheat){
+#   hh <- hour(date)
+#   mi <- minute(date)
+#   hhf <- hh + mi/60
+#   lolim <- preheat$start-preheat$hours
+#   hilim <- preheat$start
+#   override <- lolim<hhf & hhf<=hilim
+# #   if (override){
+# #     print(sprintf("hh:%d mi:%d hhf:%.2f   ph.hours:%.2f lolim:%.2f hilim:%.2f  ovr:%s",hh,mi,hhf,preheat$hours,lolim,hilim,override))
+# #   }
+#   
+#   occval <- ifelse( override,preheat$level,occpred )
+#   rv <- list()
+#   rv$occval <- occval
+#   rv$override <- override
+#   return(rv)
+# }
+
+
+# cascadeModels <- function(rparms,occrf,ergrf,diatrf,iatrf,indf,iatlims=NULL,trace=F,preheat){
+#   sstime <- rparms$sitime
+#   eetime <- rparms$eitime
+# 
+#   # 
+#   indf$occ <- as.numeric(as.character(indf$occ))
+#   casdf <- indf[ sstime<=indf$time & indf$time<=eetime, ]
+#   #  casdf[["pred1.occ"]] <- predict(occrf,casdf)
+#   #  casdf[["pred1.erg"]] <- predict(ergrf,casdf)
+#   #  casdf[["pred1.diat"]] <- predict(diatrf,casdf)
+#   casdf[["pred.cas.occ"]] <- NA 
+#   casdf[["pred.cas.erg"]] <- NA 
+#   casdf[["pred.cas.diat"]] <- NA 
+#   casdf[["pred.cas.iat"]] <- NA 
+#   casdf[["pred.iat"]] <- NA
+#   if (!is.null(iatlims)){
+#     casdf[["iatseg"]] <- "heating"
+#     #print(sprintf("iatlims:%.1f %.1f",iatlims[1],iatlims[2]))
+#   }
+#   casdf[["orig.cas.occ"]] <- casdf[["occ"]]
+#   casdf[["orig.cas.erg"]] <- casdf[["erg"]]
+#   casdf[["orig.cas.diat"]] <- casdf[["diat"]]
+#   casdf[["orig.cas.iat"]] <- casdf[["iat"]]
+#   casdf[1,"pred.iat"] <- casdf[1,"iat"]
+#   iend <- nrow(casdf)
+#   occovcnt <- 0
+#   for( i in 2:iend ){
+#     predoccval  <- as.numeric(as.character(predict(occrf,casdf[i-1,])))
+#     occctrl <- occcontrol(casdf[i,"time"],predoccval,preheat)
+#     casdf[i,"pred.cas.occ"] <- occcontrol(casdf[i,"time"],predoccval,preheat)$occval
+#     if (occctrl$override){
+#       occovcnt <- occovcnt+1
+#     }
+# 
+#   #  casdf[i,"pred.cas.occ"]  <- as.numeric(casdf[i,"occ"])   # Add this for an OCC Lock
+#     
+#     casdf[i,"occ"] <- as.numeric(as.character(casdf[[i,"pred.cas.occ"]]))
+#   #  browser()
+#     casdf[i,"pred.cas.erg"]  <- predict(ergrf,casdf[i-1,])
+# 
+#     # casdf[i,"pred.cas.erg"]  <- casdf[i,"erg"]   # Add this for an ERG Lock
+#     casdf[i,"erg"] <- casdf[i,"pred.cas.erg"]   
+#     casdf[i,"pred.cas.diat"] <- predict(diatrf,casdf[i-1,])
+#     casdf[i,"diat"] <- casdf[i,"pred.cas.diat"]
+#     casdf[i-1,"liat"] <- casdf[max(1,i-2),"iat"]
+#    # casdf[i-1,"diat"] <- casdf[max(1,i-2),"iat"]-casdf[max(1,i-3),"iat"]
+#     casdf[i,"pred.new.iat"] <- predict(iatrf,casdf[i-1,])
+#     if (i<iend){
+#       casdf[i,"pred.cas.iat"] <- max(64,min(80,casdf[i-1,"iat"] + casdf[i,"diat"]))
+#       casdf[i,"iat"] <- casdf[i,"pred.cas.iat"]
+#       casdf[i,"iat"] <- casdf[i,"pred.new.iat"]
+#       #      casdf[i+1,"iat"] <- casdf[i,"iat"] + casdf[i,"diat"]
+#       if (!is.null(iatlims)){
+#         if (casdf[i,"pred.cas.iat"]>iatlims[2]){
+#           casdf[i,"iatseg"] <- "cooling"
+#         } else if(casdf[i,"pred.cas.iat"]>iatlims[1]){
+#           casdf[i,"iatseg"] <- "drift"
+#         } 
+#       }
+#     }
+#     casdf[i,"pred.iat"] <- casdf[i-1,"pred.iat"] + casdf[i,"orig.cas.diat"]
+#     
+# 
+#     
+#     if(trace){
+#       msg <- sprintf("t:%d - pred.cas.iat_t:%.1f orig.cas.iat_t:%.1f erg_t:%.1f oat_t:%.1f ->  diat_t:%.2f iat.new_t:%.2f %s",
+#                       i,casdf[i,"pred.cas.iat"],casdf[i,"orig.cas.iat"],
+#                         casdf[i,"erg"],casdf[i,"temp.f"], casdf[i,"diat"],
+#                         casdf[i,"pred.new.iat"],
+#                         casdf[i,"iatseg"]
+#                      )
+#       print(msg)
+#     }
+#   }
+#   
+# #  rparms$usagecostkwh <- 0.06
+# #  rparms$demandcostkw <- 6.00  
+#   
+#   
+#   peakerg <- max(casdf[["pred.cas.erg"]],na.rm=T )
+#   sumerg  <- sum(casdf[["pred.cas.erg"]],na.rm=T)/4
+#   avgiat <- mean(casdf[["pred.cas.iat"]],na.rm=T)
+#   avgocc <- mean(casdf[["pred.cas.occ"]],na.rm=T)
+#   dc <- peakerg*rparms$demandcostkw
+#   uc <- sumerg*rparms$usagecostkwh
+#   tc <- dc+uc
+#   
+#   msg <- sprintf("shr:%.1f hr:%.2f lv:%.2f peakE:%.1f sumE:%.1f dc:%.2f uc:%.2f tc:%.2f occov:%d avgT:%.3f",
+#                   preheat$start,preheat$hours,preheat$level,
+#                   peakerg,sumerg,dc,uc,tc,
+#                   occovcnt,avgiat)
+#   print(msg)
+#   
+#   rv <- list()
+#   rv$casdf <- casdf
+#   rv$peakerg <- peakerg
+#   rv$sumerg <- sumerg
+#   rv$dc <- dc
+#   rv$uc <-  uc
+#   rv$tc <-  tc
+#   rv$avgocc <- avgocc
+#   rv$avgiat <- avgiat
+#   rv$preheat <- preheat
+#   rv$occovcnt <- occovcnt
+#   rv$sstime <- sstime
+#   rv$eetime <- eetime
+#   return(rv)
+# }
+
+
+
+# doOnePlot <- function(s1.x, s1.y, s1.lab, s1.iatseg,
+#                     s2.x, s2.y, s2.lab, s2.color,
+#                     ph.h, ph.l,
+#                    maintit,xlab,ylab,lines=F,tdf=NULL,ybreaks=NULL)
+# {
+#     q1df <- data.frame(x = s1.x, y = s1.y, lab=s1.iatseg,ph.hours=ph.h,ph.level=ph.l)
+#     q2df <- data.frame(x = s2.x, y = s2.y, lab=s2.lab,   ph.hours=ph.h,ph.level=ph.l)
+# 
+#     qdf <- rbind(q1df,q2df)
+#     qdf <- qdf[ order(qdf$x), ]
+# 
+#     # for now disconnect these labels
+#     qdf$lab <- as.character(qdf$lab)
+#     idx <- qdf$lab=="heating" | qdf$lab=="cooling"
+#     if (sum(idx)>0){
+#       qdf[ idx,]$lab <- "drift"
+#     }
+# 
+#     qcolors        <- c("darkblue","darkblue","darkblue",s2.color,"darkred","darkblue","darkgreen")
+#     names(qcolors) <- c("heating","drift","cooling",s2.lab,"high","norm","low")
+#     
+#     gp <- ggplot(qdf, aes(x,y,color=lab) ) +
+#       
+#       geom_point(alpha = I(0.5),na.rm=T) +
+#       
+#       scale_color_manual(values = qcolors) +
+#       labs(title=maintit,y=ylab,x=xlab) + 
+#       theme_bw() + 
+#       theme(axis.text.x = element_text(angle = 30, hjust = 1)) + 
+#       facet_grid( ph.hours ~ ph.level )
+#     if (lines){
+#       gp <- gp + geom_line(alpha = I(0.5),na.rm=T)
+#     }
+#     if (!is.null(tdf)){
+#       #print(tdf)
+#       gp <- gp + geom_text(data=tdf,aes(x=x,y=y,label=label,color=color,hjust=hjust))
+#       ggp <<- gp
+#     }
+#     if (!is.null(ybreaks)){
+#       gp <- gp + scale_y_continuous(breaks=ybreaks)
+#     }
+#     return(gp)
+# }
+# 
+# doPlots <- function(ddf,odf,edf,tdf,rparms,mode){
+#   
+#   g1 <- doOnePlot( ddf$time,ddf$pred.cas.occ,sprintf("pred %s occ",mode),ddf$iatseg,
+#            ddf$time,ddf$orig.cas.occ,"act occ","gray80",ddf$ph.hours,ddf$ph.level,
+#            sprintf("%s occ - pred %s vs. act",rparms$bld,mode),
+#            "time","occ",lines=T,tdf=odf,ybreaks=c(0.25,0.5,0.75,1.0))  
+#   
+#   g2 <- doOnePlot(ddf$time,ddf$pred.cas.erg,sprintf("pred %s %s",mode,rparms$ergname),ddf$iatseg,
+#           ddf$time,ddf$orig.cas.erg,"act erg","gray80",ddf$ph.hours,ddf$ph.level,
+#           sprintf("%s %s - pred %s vs. act", rparms$bld,rparms$ergname,mode),
+#           "time",rparms$ergname,lines=T,tdf=edf)
+#   g3 <- NULL
+# #   g3 <- doOnePlot(ddf$time,ddf$pred.cas.diat,sprintf("pred %s diat",mode),ddf$iatseg,
+# #           ddf$time,ddf$orig.cas.diat,"act diat","gray80",ddf$ph.hours,ddf$ph.level,
+# #           sprintf("%s diat pred %s vs. act",rparms$bld,mode),
+# #           "time","delta temp",lines=T)  
+#   
+#   g4 <- doOnePlot(ddf$time,ddf$pred.cas.iat,sprintf("pred %s iat",mode),ddf$iatseg,
+#           ddf$time,ddf$orig.cas.iat,"act iat","gray80",ddf$ph.hours,ddf$ph.level,
+#           sprintf("%s iat pred %s vs. act",rparms$bld,mode),
+#           "time","indoor air temp",lines=T,tdf=tdf)  
+#   rv <- list()
+#   rv$occ <- g1
+#   rv$erg <- g2
+#   rv$iat <- g3
+#   return(rv)
+# }
+
+# combineCosts <- function(cdf,rv){
+#   ddf <- data.frame(peakerg=rv$peakerg,sumerg=rv$sumerg)
+#   ddf$dc <- rv$dc
+#   ddf$uc <-  rv$uc
+#   ddf$tc <-  rv$tc
+#   ddf$avgiat <- rv$avgiat
+#   ddf$avgocc <- rv$avgocc
+#   ddf$ph.start <- rv$preheat$start
+#   ddf$ph.hours <- rv$preheat$hours
+#   ddf$ph.level <- rv$preheat$level
+#   ddf$sstime <- rv$sstime
+#   ddf$eetime <- rv$eetime
+#   
+#   if (is.null(cdf)){
+#     cdf <- ddf
+#   } else {
+#     cdf <- rbind(cdf,ddf)
+#   }
+#   rownames(cdf) <- NULL
+#   return(cdf)
+# }
+
+# combineData <- function(adf,rv){
+#   ddf <- rv$casdf
+#   ddf$ph.start <- rv$preheat$start
+#   ddf$ph.hours <- rv$preheat$hours
+#   ddf$ph.level <- rv$preheat$level
+#   ddf <- ddf[ order(ddf$time), ]
+#   rownames(ddf) <- NULL
+#   if (is.null(adf)){
+#     adf <- ddf
+#   } else {
+#     adf <- rbind(adf,ddf)
+#   }
+#   rownames(adf) <- NULL
+#   return(adf)
+# }
+```
+
+# Random Forest
+
+```{r fig.width=12, fig.height=12,echo=T}
+
+# ergCdfTotdf <- function(cdf){
+# 
+#   # Line 1  
+#   t1df <- data.frame(x=cdf$eetime,y=max(cdf$peakerg)*1.04)
+#   t1df$label <- sprintf("d:%.0f u:%.0f t: %.0f",cdf$dc,cdf$uc,cdf$tc)
+#   t1df$hjust <- 1
+#   t1df$size <- 2
+#   t1df$color <- "norm"
+#   t1df$ph.hours <- cdf$ph.hours
+#   t1df$ph.level <- cdf$ph.level
+#   t1df$tc <- cdf$tc
+#   
+#   idx <- which(t1df$tc==max(t1df$tc))
+#   t1df[idx,]$color <- "high"
+#   idx <- which(t1df$tc==min(t1df$tc))
+#   t1df[idx,]$color <- "low"
+#   t1df$tc <- NULL
+# 
+#   # Line 2  
+#   t2df <- data.frame(x=cdf$eetime,y=max(cdf$peakerg)*0.99)
+#   t2df$label <- sprintf("pk:%.0f ",cdf$peakerg)
+#   t2df$hjust <- 1
+#   t2df$size <- 2
+#   t2df$color <- "norm"
+#   t2df$ph.hours <- cdf$ph.hours
+#   t2df$ph.level <- cdf$ph.level
+#   t2df$peakerg <- cdf$peakerg
+#   
+#   idx <- which(t2df$peakerg==max(t2df$peakerg))
+#   t2df[idx,]$color <- "high"
+#   idx <- which(t2df$peakerg==min(t2df$peakerg))
+#   t2df[idx,]$color <- "low"
+#   t2df$peakerg <- NULL
+# 
+#   # Line 2  
+#   t3df <- data.frame(x=cdf$eetime,y=max(cdf$peakerg)*0.94)
+#   t3df$label <- sprintf("sm:%.0f ",cdf$sumerg)
+#   t3df$hjust <- 1
+#   t3df$size <- 2
+#   t3df$color <- "norm"
+#   t3df$ph.hours <- cdf$ph.hours
+#   t3df$ph.level <- cdf$ph.level
+#   t3df$sumerg <- cdf$sumerg
+#   
+#   idx <- which(t3df$sumerg==max(t3df$sumerg))
+#   t3df[idx,]$color <- "high"
+#   idx <- which(t3df$sumerg==min(t3df$sumerg))
+#   t3df[idx,]$color <- "low"
+#   t3df$sumerg <- NULL
+#   
+#     
+#   tdf <- rbind(t1df,t2df,t3df)
+#   return(tdf)
+# }
+
+# iatCdfTotdf <- function(cdf){
+# 
+#   # Line 1  
+#   dy <- (72-69)
+#   t1df <- data.frame(x=cdf$eetime,y=(72.5-69)*1.05 + 69)
+#   t1df$label <- sprintf("avg occ:%.3f iat:%.3f",cdf$avgocc,cdf$avgiat)
+#   t1df$hjust <- 1
+#   t1df$size <- 2
+#   t1df$color <- "norm"
+#   t1df$ph.hours <- cdf$ph.hours
+#   t1df$ph.level <- cdf$ph.level
+#   t1df$avgiat <- cdf$avgiat
+#   
+#   idx <- which(t1df$avgiat==max(t1df$avgiat))
+#   t1df[idx,]$color <- "high"
+#   idx <- which(t1df$avgiat==min(t1df$avgiat))
+#   t1df[idx,]$color <- "low"
+#   t1df$avgiat <- NULL
+#   
+#     
+#   tdf <- rbind(t1df)
+#   return(tdf)
+# }
+
+# occCdfTotdf <- function(cdf){
+# 
+#   # Line 1  
+#   t1df <- data.frame(x=cdf$eetime,y=1.0*1.12)
+#   t1df$label <- sprintf("avg occ:%.3f iat:%.3f",cdf$avgocc,cdf$avgiat)
+#   t1df$hjust <- 1
+#   t1df$size <- 2
+#   t1df$color <- "norm"
+#   t1df$ph.hours <- cdf$ph.hours
+#   t1df$ph.level <- cdf$ph.level
+#   t1df$avgocc <- cdf$avgocc
+#   
+#   idx <- which(t1df$avgocc==max(t1df$avgocc))
+#   t1df[idx,]$color <- "high"
+#   idx <- which(t1df$avgocc==min(t1df$avgocc))
+#   t1df[idx,]$color <- "low"
+#   t1df$avgocc <- NULL
+#   
+#     
+#   tdf <- rbind(t1df)
+#   return(tdf)
+# }
+# 
+# runSenarios <- function(rparms,starthr,hrs,lvs,occlst,erglst,diatlst,iiatlst){
+#   adf <- NULL
+#   cdf <- NULL
+#   tdf <- NULL
+#   
+#   mdf <- mergeDfsByQhr(occlst$rdf,erglst$rdf,iiatlst$rdf)
+#   
+#   
+#   preheat <- list()
+#   preheat$start <- starthr
+#   preheat$hours <- 4
+#   preheat$level <- 0.5
+#   
+#   for (hour in hrs){
+#     for (level in lvs){
+#       preheat$hours <- hour
+#       preheat$level <- level
+#       rv <- cascadeModels(rparms,occlst$rf,erglst$rf,diatlst$rf,iiatlst$rf,mdf,
+#                           diatlst$iatlims,preheat=preheat)
+#       
+#       adf <- combineData(adf,rv)
+#       cdf <- combineCosts(cdf,rv)
+#     }
+#   }
+#   rv <- list()
+#   rv$cdf <- cdf
+#   rv$adf <- adf
+#   rv$odf <- occCdfTotdf(cdf)
+#   rv$edf <- ergCdfTotdf(cdf)
+#   rv$tdf <- iatCdfTotdf(cdf)
+#   rv$plts <- doPlots(rv$adf,rv$odf,rv$edf,rv$tdf,rparms,"rf")
+#   return(rv)
+# }
+
+
+starthr <- 7  
+hrs <- c(2.0,2.25,2.5,2.75,3.0)
+lvs <- c(0.6,0.8,1.0)
+runs <- runSenarios(rparms,starthr,hrs,lvs,tset$occ,tset$erg,tset$diat,tset$iat)
+print(runs$plts$occ)
+print(runs$plts$erg)
+print(runs$plts$iat)
+```
+
+
+```{r echo=T}
+getElapSecs <- function (starttime){
+  as.numeric((Sys.time()-starttime)[1],units="secs")
+}
+print(sprintf("%s created on %s took %.1f secs",ver$string,ver$startfmttime,getElapSecs(ver$starttime)))
+```

@@ -1,0 +1,10 @@
+Package: reaferg
+Type: Package
+Title: RE&F Energy Cascaded Models
+Version: 0.1
+Date: 2015-11-19
+Author: Mike Wise
+Maintainer: Who to complain to <mwise@microsoft.net>
+Description: Just a skeleton taken from linmod
+License: God knows what
+Suggests: testthat

@@ -1,0 +1,10 @@
+library(utils)
+require(reaferg)
+#detach(package:reaferg)
+remove.packages(c("reaferg"))
+
+curwd <- getwd()
+#setwd("c:/88acres/5-packages/")
+setwd("c:/transfer/deshark/")
+install.packages("reaferg",type="source",repo=NULL,verbose=T)
+setwd(curwd)
